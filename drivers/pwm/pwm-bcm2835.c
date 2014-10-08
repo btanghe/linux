@@ -23,7 +23,7 @@
 
 #define PWM_CONTROL_MASK	0xff
 #define PWM_MODE		0x80		/* set timer in pwm mode */
-#define DEFAULT			0xff		/* set timer in default mode */
+#define DEFAULT_PWM_MODE	0xff		/* set timer in default mode */
 #define PWM_CONTROL_STRIDE	8
 #define MIN_PERIOD		108		/* 9.2Mhz max pwm clock */
 
@@ -36,7 +36,7 @@ struct bcm2835_pwm {
 	struct clk *clk;
 };
 
-static inline struct bcm2835_pwm  *to_bcm2835_pwm(struct pwm_chip *chip)
+static inline struct bcm2835_pwm *to_bcm2835_pwm(struct pwm_chip *chip)
 {
 	return container_of(chip, struct bcm2835_pwm, chip);
 }
@@ -47,7 +47,7 @@ static int bcm2835_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 	u32 value;
 
 	value = readl(pc->base);
-	value &= ~(PWM_CONTROL_MASK << PWM_CONTROL_STRIDE * pwm->hwpwm);
+	value &= ~(PWM_CONTROL_MASK << (PWM_CONTROL_STRIDE * pwm->hwpwm));
 	value |= (PWM_MODE << (PWM_CONTROL_STRIDE * pwm->hwpwm));
 	writel(value, pc->base);
 	return 0;
@@ -59,7 +59,7 @@ static void bcm2835_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 	u32 value;
 
 	value = readl(pc->base);
-	value &= (~DEFAULT << (PWM_CONTROL_STRIDE * pwm->hwpwm));
+	value &= (~DEFAULT_PWM_MODE << (PWM_CONTROL_STRIDE * pwm->hwpwm));
 	writel(value, pc->base);
 }
 
@@ -85,7 +85,7 @@ static int bcm2835_pwm_enable(struct pwm_chip *chip,
 	u32 value;
 
 	value = readl(pc->base);
-	value |= (PWM_ENABLE << (PWM_CONTROL_STRIDE * pwm->hwpwm));
+	value |= PWM_ENABLE << (PWM_CONTROL_STRIDE * pwm->hwpwm);
 	writel(value, pc->base);
 	return 0;
 }
@@ -109,7 +109,7 @@ static int bcm2835_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm,
 
 	value = readl(pc->base);
 	if (polarity == PWM_POLARITY_NORMAL)
-		value &= ~(PWM_POLARITY << PWM_CONTROL_STRIDE * pwm->hwpwm);
+		value &= ~(PWM_POLARITY << (PWM_CONTROL_STRIDE * pwm->hwpwm));
 	else if (polarity == PWM_POLARITY_INVERSED)
 		value |= PWM_POLARITY << (PWM_CONTROL_STRIDE * pwm->hwpwm);
 	writel(value, pc->base);
@@ -139,6 +139,11 @@ static int bcm2835_pwm_probe(struct platform_device *pdev)
 
 	pwm->dev = &pdev->dev;
 
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+        pwm->base = devm_ioremap_resource(&pdev->dev, r);
+        if (IS_ERR(pwm->base))
+		return PTR_ERR(pwm->base);
+
 	clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(clk)) {
 		dev_err(&pdev->dev, "no clock found: %ld\n", PTR_ERR(clk));
@@ -147,17 +152,10 @@ static int bcm2835_pwm_probe(struct platform_device *pdev)
 
 	pwm->clk = clk;
 	ret = clk_prepare_enable(pwm->clk);
-	if (ret) {
-		clk_disable_unprepare(pwm->clk);
+	if (ret)
 		return ret;
-	}
 
 	pwm->scaler = NSEC_PER_SEC / clk_get_rate(clk);
-
-	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	pwm->base = devm_ioremap_resource(&pdev->dev, r);
-	if (IS_ERR(pwm->base))
-		return PTR_ERR(pwm->base);
 
 	pwm->chip.dev = &pdev->dev;
 	pwm->chip.ops = &bcm2835_pwm_ops;
@@ -166,11 +164,14 @@ static int bcm2835_pwm_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, pwm);
 
 	ret = pwmchip_add(&pwm->chip);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "pwmchip_add() failed: %d\n", ret);
-		return ret;
-	}
+	if (ret < 0)
+		goto add_fail;
+
 	return 0;
+
+add_fail:
+	clk_disable_unprepare(pwm->clk);
+	return ret;
 }
 
 static int bcm2835_pwm_remove(struct platform_device *pdev)
