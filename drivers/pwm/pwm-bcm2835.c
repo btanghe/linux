@@ -140,8 +140,8 @@ static int bcm2835_pwm_probe(struct platform_device *pdev)
 	pwm->dev = &pdev->dev;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-        pwm->base = devm_ioremap_resource(&pdev->dev, r);
-        if (IS_ERR(pwm->base))
+	pwm->base = devm_ioremap_resource(&pdev->dev, r);
+	if (IS_ERR(pwm->base))
 		return PTR_ERR(pwm->base);
 
 	clk = devm_clk_get(&pdev->dev, NULL);
